@@ -1,0 +1,41 @@
+"""RoleQ-T 参考实现（最小可验证范围）。"""
+
+from .core import (
+    READER_KINDS,
+    TERNARY_BITS,
+    WRITER_KINDS,
+    exact_grid_fit,
+    exact_ternary_fit,
+    infer_role,
+    levels_per_code,
+    quantize_gptq,
+    quantize_rtn,
+    random_hadamard,
+    refit_row_scales,
+    relative_weighted_error,
+    resident_bpw,
+    role_axis,
+    rotate_reader,
+    rotate_writer,
+    weighted_error,
+)
+
+__all__ = [
+    "READER_KINDS",
+    "TERNARY_BITS",
+    "WRITER_KINDS",
+    "exact_grid_fit",
+    "exact_ternary_fit",
+    "infer_role",
+    "levels_per_code",
+    "quantize_gptq",
+    "quantize_rtn",
+    "random_hadamard",
+    "refit_row_scales",
+    "relative_weighted_error",
+    "resident_bpw",
+    "role_axis",
+    "rotate_reader",
+    "rotate_writer",
+    "weighted_error",
+]
