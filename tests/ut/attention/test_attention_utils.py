@@ -56,8 +56,8 @@ def test_get_flashmla_ops_returns_none_when_ops_submodule_is_missing(monkeypatch
 
 def test_get_flashmla_ops_requires_both_callable_apis(monkeypatch):
     ops = SimpleNamespace(
-        flash_mla_with_kvcache=MagicMock(),
-        flash_mla_with_kvcache_metadata=None,
+        flash_mla=MagicMock(),
+        flash_mla_metadata=None,
     )
     import_module = MagicMock(return_value=ops)
     monkeypatch.setattr(attention_utils, "_has_flashmla_module", lambda: True)
@@ -70,8 +70,8 @@ def test_get_flashmla_ops_returns_both_callable_apis(monkeypatch):
     attention_op = MagicMock()
     metadata_op = MagicMock()
     ops = SimpleNamespace(
-        flash_mla_with_kvcache=attention_op,
-        flash_mla_with_kvcache_metadata=metadata_op,
+        flash_mla=attention_op,
+        flash_mla_metadata=metadata_op,
     )
     import_module = MagicMock(return_value=ops)
     monkeypatch.setattr(attention_utils, "_has_flashmla_module", lambda: True)
@@ -215,3 +215,11 @@ def test_filter_chunked_req_indices_mixed_mask() -> None:
     )
 
     torch.testing.assert_close(indices, torch.tensor([0, 1, 3, 4, 5]))
+
+
+def test_is_dcp_enabled_tracks_active_target_and_draft_config(monkeypatch):
+    target = SimpleNamespace(parallel_config=SimpleNamespace(decode_context_parallel_size=8))
+    draft = SimpleNamespace(parallel_config=SimpleNamespace(decode_context_parallel_size=1))
+    for config, expected in [(target, True), (draft, False), (target, True)]:
+        monkeypatch.setattr(attention_utils, "get_current_vllm_config", lambda config=config: config)
+        assert attention_utils.is_dcp_enabled() is expected

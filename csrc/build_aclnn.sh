@@ -101,7 +101,6 @@ elif [[ "$SOC_VERSION" =~ ^ascend910b ]]; then
         "grouped_matmul_swiglu_quant_weight_nz_tensor_list"
         "sparse_flash_attention"
         "kv_quant_sparse_flash_attention_vllm"
-        "moe_gating_top_k"
         "moe_gating_top_k_hash"
         "add_rms_norm_bias"
         "rms_norm_cast"
@@ -123,12 +122,11 @@ elif [[ "$SOC_VERSION" =~ ^ascend910b ]]; then
         "dequant_swiglu_quant"
         "grouped_matmul_swiglu_quant"
         "grouped_matmul_swiglu_quant_v2"
+        "attn_res_fwd"
         "chunk_fwd_o_vllm"
         "kda_gate_cumsum_vllm"
         "kda_layout_swap12"
-        "sparse_attention_score"
         "k2q_csr"
-        "msa_index_score"
         "mla_preprocess"
         "fused_sparse_attention_overlap"
         "fused_lightning_indexer_manage"
@@ -153,7 +151,6 @@ elif [[ "$SOC_VERSION" =~ ^ascend910_93 ]]; then
         "dispatch_ffn_combine"
         "dispatch_ffn_combine_w4_a8"
         "dispatch_ffn_combine_bf16"
-        "moe_gating_top_k"
         "moe_gating_top_k_hash"
         "add_rms_norm_bias"
         "rms_norm_cast"
@@ -172,7 +169,6 @@ elif [[ "$SOC_VERSION" =~ ^ascend910_93 ]]; then
         "inplace_partial_rotary_mul"
         "rms_norm_dynamic_quant"
         "dequant_situ_quant"
-        "gmm_dequant_situ_quant"
         "dequant_swiglu_quant"
         "grouped_matmul_swiglu_quant"
         "grouped_matmul_swiglu_quant_v2"
@@ -180,9 +176,7 @@ elif [[ "$SOC_VERSION" =~ ^ascend910_93 ]]; then
         "chunk_fwd_o_vllm"
         "kda_gate_cumsum_vllm"
         "kda_layout_swap12"
-        "sparse_attention_score"
         "k2q_csr"
-        "msa_index_score"
         "mla_preprocess"
         "fused_sparse_attention_overlap"
         "fused_lightning_indexer_manage"
@@ -223,8 +217,7 @@ elif [[ "$SOC_VERSION" =~ ^ascend950 ]]; then
         "kda_gate_cumsum_vllm"
         "kda_layout_swap12"
         "k2q_csr"
-        "sparse_attention_score"
-        "msa_index_score"
+        "hi_sparse_resolve_residency"
     )
 
     CUSTOM_OPS=$(IFS=';'; echo "${CUSTOM_OPS_ARRAY[*]}")
@@ -292,7 +285,7 @@ log_selected_ops
 
   chmod +x -- "${installer_candidates[0]}" || true
   log "running installer: ${installer_candidates[0]}"
-  "${installer_candidates[0]}" --install-path="${custom_ops_install_dir}"
+  "${installer_candidates[0]}" --install-path="${custom_ops_install_dir}" --install-for-all
   # CANN leaves generated vendor script dirs owner-read-only; keep repo-local
   # editable-build artifacts removable by the non-root user who built them.
   if [[ -d "${custom_ops_install_dir}/vendors/custom_transformer/scripts" ]]; then
