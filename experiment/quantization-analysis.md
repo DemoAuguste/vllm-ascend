@@ -1,7 +1,7 @@
 # Qwen3.8-27B 量化存储与位宽分配分析
 
 > 数据来源：`/opt/zh/slq-official`（SLQ 官方流水线，2026-10-18/19）
-> 统计脚本：`stat_slq27b.py`（本目录外的服务器副本），`error_db.json` 的 `param_counts` 为准
+> 统计脚本：[archive/slq-official-legacy/stat_slq27b.py](archive/slq-official-legacy/stat_slq27b.py)；`error_db.json` 的 `param_counts` 为准
 > 口径说明：**bpp = 参数加权平均位宽（含 g128 的 scale/zero 开销）**；体积按十进制 GB（1 GB = 10⁹ B）
 
 ---
@@ -136,26 +136,26 @@
 ## 6. 复现命令
 
 ```bash
-# 生成 b3.6/b3.8 配置（ILP，给定平均位宽预算）
-python make_configs.py
+# 生成 b3.4/b3.6/b3.8/b4.0 配置（ILP，给定平均位宽预算），写入 configs/
+cd /opt/zh/slq-official && python scripts/make_configs.py
 
 # 拼装 fake checkpoint
 python slq_build_checkpoint.py \
   --model <Qwen3.8-27B> \
   --layer-dir .../data/slq_27b/<snap>/4bit \
-  --config config_tl27b_b3.6.txt \
+  --config configs/config_tl27b_b3.6.txt \
   --output-dir ckpt_27b --subdir-name b36 \
   --dtype bfloat16 --quant-format fake --group-size 128 --force
 
 # 双卡部署（spawn 模式，需补齐 VLM preprocessor 文件）
-bash run_deploy27b.sh <ckpt>/b36 2 5,7 1 8100
+bash scripts/run_deploy27b.sh <ckpt>/b36 2 5,7 1
 ```
 
 ---
 
 ## 7. 数据出处
 
-- 位宽配置：`/opt/zh/slq-official/config_tl27b_b{3.4,3.6,3.8,4.0}.txt`
+- 位宽配置：`/opt/zh/slq-official/configs/config_tl27b_b{3.4,3.6,3.8,4.0}.txt`
 - 参数量：`.../4bit/error_db.json` → `param_counts`（496 层）
 - 体积：`du`/`os.walk` 实测 + 模型 `model.safetensors.index.json` 的 `total_size`
 - 精度：`zs27b_{bf16,b36,b38}_500.json`（6 任务 × 500 样本，log-likelihood 口径）

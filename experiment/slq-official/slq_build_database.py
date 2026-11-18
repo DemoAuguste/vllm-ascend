@@ -113,8 +113,7 @@ def main():
     parser = argparse.ArgumentParser(description="Build sensitivity databases")
     parser.add_argument('--model', type=str, required=True)
     parser.add_argument('--layer-dir', type=str, required=True, help="Directory of quantized layer weights")
-    parser.add_argument('--calibration-data', type=str, default='fineweb_edu',
-                        )
+    parser.add_argument('--calibration-data', type=str, default='fineweb_edu')
     parser.add_argument('--calibration-samples', type=int, default=512)
     parser.add_argument('--calibration-seq-length', type=int, default=2048)
     parser.add_argument('--batch-size', type=int, default=4)

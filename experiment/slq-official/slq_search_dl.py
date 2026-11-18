@@ -11,7 +11,6 @@ from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch_npu  # noqa: F401  (NPU backend)
-from ortools.linear_solver import pywraplp
 
 from src.data.loading import MASKED_DATASETS, get_data
 from src.metrics.evaluation import compute_baseline_topk, compute_kl_and_ear

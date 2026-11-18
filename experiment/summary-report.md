@@ -238,15 +238,15 @@ in_proj_z 2.875 < in_proj_qkv 3.125 < gate/up 3.438 < q/k/v 3.500
 
 **服务器 `/opt/zh/slq-official`**
 ```
-config_tl27b_b3.4.txt / b3.6.txt / b3.8.txt / b4.0.txt
+configs/config_tl27b_b3.4.txt / b3.6.txt / b3.8.txt / b4.0.txt
 data/slq_27b/<snap>/4bit/             # 496 层 × {2,4,6,8} + *_qparams.pt（275 GiB）
 data/slq_27b/<snap>/4bit/error_db.json
 data/slq_27b/<snap>/4bit/shapley_*_8perms_bw2-4-6-8_*.json
 ckpt_27b/<snap>/b36 | b38 | b34 | uniform2|4|6   # fake-quant，各 ~51 GB
-run_deploy27b.sh                      # TP=2 部署（spawn + VLM 预处理）
+scripts/run_deploy27b.sh              # TP=2 部署（spawn + VLM 预处理）
 ```
 
-**评测结果 `/opt/zh/SLQ-gptq`**
+**评测结果 `/opt/zh/slq-official/results`**
 ```
 zs27b_bf16_500.json / zs27b_b36_500.json / zs27b_b38_500.json
 zs27b_{bf16,u2,u4,u6,b34,b36,b38}.json     # 200 样本
@@ -254,39 +254,43 @@ zs27b_{bf16,u2,u4,u6,b34,b36,b38}.json     # 200 样本
 
 **本地文档**
 ```
-experiment/task.md                    # 阶段规划与状态
-experiment/progress.md                # 全量进展日志
+experiment/task.md                    # 任务定义、验收口径、阶段状态
+experiment/summary-report.md          # 本报告（权威结论）
+experiment/reproduction-guide.md      # 复现手册
 experiment/quantization-analysis.md   # 存储与位宽详细分析
-experiment/summary-report.md          # 本报告
+experiment/progress.md                # 当前进度（历史日志见 archive/logs/）
+experiment/slq-official/              # 现行实现（代码 + 配置 + 脚本）
+experiment/archive/                   # 历史方案、过期文档、逐日日志（只读）
 ```
 
 ---
 
 ## 10. 复现命令
 
+以下命令均在 `/opt/zh/slq-official` 下执行；完整步骤与排错见 [reproduction-guide.md](reproduction-guide.md)。
+
 ```bash
 # 1) GPTQ 全位宽（27B，单卡，cpu_offload）
-bash run_slq27b_v2.sh
+bash scripts/run_slq27b.sh
 
-# 2) 敏感度库（两进程并行，各 P=4）
-bash run_shapley27b.sh 5 42 &
-bash run_shapley27b.sh 7 43 &
-python merge_shapley.py <seed42.json> <seed43.json> <merged.json>
+# 2) 敏感度库（两进程并行，各 P=4，之后合并为 8 排列）
+ASCEND_RT_VISIBLE_DEVICES=5 nohup bash scripts/run_db27b.sh shapley 42 &
+ASCEND_RT_VISIBLE_DEVICES=7 nohup bash scripts/run_db27b.sh shapley 43 &
+python scripts/merge_shapley.py <seed42.json> <seed43.json> <merged.json>
 
-# 3) 预算扫描配置
-python make_configs.py
+# 3) 预算扫描配置（写入 configs/）
+python scripts/make_configs.py
 
 # 4) checkpoint 拼装（补齐 VLM 预处理文件）
 python slq_build_checkpoint.py --model <27B> --layer-dir <store> \
-  --config config_tl27b_b3.6.txt --output-dir ckpt_27b --subdir-name b36 \
+  --config configs/config_tl27b_b3.6.txt --output-dir ckpt_27b --subdir-name b36 \
   --dtype bfloat16 --quant-format fake --group-size 128 --force
 
-# 5) zero-shot 评测
-python zeroshot_eval.py --model <ckpt>/b36 --device npu:0 --limit 500 \
-  --tasks arc_easy,arc_challenge,piqa,hellaswag,winogrande,openbookqa --out zs27b_b36_500.json
+# 5) zero-shot 评测（结果写入 results/）
+bash scripts/run_zs.sh 500 b36
 
 # 6) 双卡部署
-bash run_deploy27b.sh <ckpt>/b36 2 5,7 1 8100
+bash scripts/run_deploy27b.sh <ckpt>/b36 2 5,7 1
 ```
 
 ---

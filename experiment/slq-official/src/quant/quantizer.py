@@ -18,6 +18,14 @@ def _barrier():
         dist.barrier()
 
 
+def _empty_cache() -> None:
+    """Drop the device allocator cache (NPU when torch_npu is loaded, CUDA otherwise)."""
+    if hasattr(torch, "npu"):
+        torch.npu.empty_cache()
+    else:
+        torch.cuda.empty_cache()
+
+
 class Quantizer:
 
     def __init__(
@@ -75,10 +83,18 @@ class Quantizer:
                 os.path.exists(os.path.join(self.save_dir, n, f"{calibration_bitwidth}.pth"))
                 for n in names
             )
+            # All ranks must take the same branch: a resuming rank would otherwise skip
+            # the GPTQ collectives the others wait on (deadlock), e.g. when each rank
+            # writes to its own local disk.
+            if dist_utils.is_dist_available_and_initialized():
+                flag = torch.tensor([int(all_saved)], device=device)
+                dist.all_reduce(flag, op=dist.ReduceOp.MIN)
+                all_saved = bool(flag.item())
             if all_saved:
                 for n in names:
                     bundle = load_qparams(os.path.join(self.save_dir, n), calibration_bitwidth)
-                    ql = QLinear(bundle["qweight"], bundle["scales"], bundle["zeros"]).to(device)
+                    ql = QLinear(bundle["qweight"], bundle["scales"], bundle["zeros"],
+                                 bias=layers[n].bias).to(device)
                     parent_name, child_name = n.rsplit(".", 1)
                     setattr(self.model.get_submodule(parent_name), child_name, ql)
                 dist_utils.print_on_main(f"  resumed block {block_id} ({len(names)} layers, no GPTQ)")
@@ -104,7 +120,7 @@ class Quantizer:
                     handle.H = None
                 handles.clear()
                 del handles, layers
-                torch.npu.empty_cache() if hasattr(torch, "npu") else torch.cuda.empty_cache()
+                _empty_cache()
 
             # later blocks are calibrated on inputs from the quantized model
             for _i, (inp_args, inp_kwargs) in enumerate(zip(input_args, input_kwargs)):
@@ -122,7 +138,7 @@ class Quantizer:
                     torch.npu.empty_cache()
             if self.cpu_offload_modules:
                 block.cpu()
-            torch.npu.empty_cache() if hasattr(torch, "npu") else torch.cuda.empty_cache()
+            _empty_cache()
             if hasattr(torch, "npu"):
                 dist_utils.print_on_main(
                     f"  block {block_id} done, npu alloc {torch.npu.memory_allocated() / 2**30:.1f} GiB")

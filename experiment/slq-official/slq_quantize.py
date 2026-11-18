@@ -6,7 +6,7 @@ import time
 import torch
 import torch_npu  # noqa: F401  (NPU backend)
 import torch.distributed as dist
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 
 from src.data.loading import MASKED_DATASETS, get_data, get_fineweb_edu_gptq
 from src.quant import dist_utils

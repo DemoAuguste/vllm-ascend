@@ -1,24 +1,63 @@
-# -*- coding: UTF-8 -*-
-"""轻量 zero-shot 评测（log-likelihood，NPU 原生），用于 SLQ 的"恢复率"口径。
+#!/usr/bin/env python
+"""Lightweight zero-shot evaluation (log-likelihood) used for the SLQ "recovery" metric.
 
-任务：arc_easy / arc_challenge / piqa / hellaswag / winogrande / openbookqa
-用法：
-  python zeroshot_eval.py --model Qwen/Qwen3-4B --device npu:0 \
-      --device-map split --device-map-split 2 --limit 200 --out bf16.json
+Tasks: arc_easy / arc_challenge / piqa / hellaswag / winogrande / openbookqa.
+
+The script is deliberately independent of `lm_eval`, which times out on the NPU
+host: each item is scored by the mean log-probability of its answer tokens.
+
+Usage:
+    python eval/zeroshot_eval.py --model <path> --device npu:0 --limit 500 \
+        --tasks arc_easy,arc_challenge,piqa,hellaswag,winogrande,openbookqa \
+        --out results/zs27b_b36_500.json
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import sys
 import time
 
 import torch
 
-from model_quant import load_model, log
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from src.models.loading import _resolve_model_class  # noqa: E402
 
 os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
+
+def log(*args):
+    print(*args, flush=True)
+
+
+def load_model(args):
+    """Load the architecture recorded in config.json; returns (model, tokenizer, device)."""
+    from transformers import AutoTokenizer
+
+    spec = args.device
+    if spec.startswith("npu"):
+        import torch_npu  # noqa: F401
+        device = torch.device(spec if ":" in spec else "npu:0")
+    else:
+        device = torch.device(spec)
+
+    model_cls = _resolve_model_class(args.model)
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    kwargs = dict(trust_remote_code=True, dtype=getattr(torch, args.dtype))
+    if args.device_map:
+        model = model_cls.from_pretrained(args.model, device_map=args.device_map, **kwargs)
+    else:
+        model = model_cls.from_pretrained(args.model, **kwargs).to(device)
+    model.config.use_cache = False
+    if hasattr(model, "language_model"):
+        model.language_model.config.use_cache = False
+    log(f"loaded {args.model} as {model_cls.__name__} on {device}")
+    return model.eval(), tokenizer, device
 
 
 @torch.no_grad()
@@ -40,7 +79,7 @@ def score_choices(model, tok, ctx, choices, device, pad_id):
         n_ch = len(ch_ids[k])
         lp = 0.0
         for i in range(n_ch):
-            p = maxlen - n_ch + i - 1          # 预测第 p+1 个 token
+            p = maxlen - n_ch + i - 1          # predicts token p+1
             logp = torch.log_softmax(logits[k, p], dim=-1)
             lp += float(logp[ids[k, p + 1]])
         scores.append(lp / max(1, n_ch))
@@ -64,11 +103,13 @@ def load_tasks(tasks):
             out[t] = ("wino", load_dataset("allenai/winogrande", "winogrande_xl", split="validation"))
         elif t == "openbookqa":
             out[t] = ("obqa", load_dataset("allenai/openbookqa", "main", split="test"))
+        else:
+            raise ValueError(f"unknown task {t}")
     return out
 
 
 def build_item(kind, row):
-    """返回 (context, choices, gold_index)。"""
+    """Return (context, choices, gold_index)."""
     if kind == "arc":
         labels = list(row["choices"]["label"])
         texts = list(row["choices"]["text"])
@@ -89,12 +130,13 @@ def build_item(kind, row):
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", required=True)
     ap.add_argument("--device", default="npu:0")
     ap.add_argument("--dtype", default="bfloat16")
-    ap.add_argument("--device-map", default=None)
-    ap.add_argument("--device-map-split", type=int, default=2)
+    ap.add_argument("--device-map", default=None,
+                    help="pass through to transformers (e.g. auto); default: single --device")
     ap.add_argument("--tasks", default="arc_easy,piqa,hellaswag,winogrande,openbookqa")
     ap.add_argument("--limit", type=int, default=200)
     ap.add_argument("--out", default=None)
@@ -118,16 +160,17 @@ def main():
             pred = int(torch.tensor(sc).argmax())
             correct += int(pred == gold)
             if (i + 1) % 50 == 0:
-                log(f"    {t}: {i+1}/{n} acc={correct/(i+1):.4f}")
+                log(f"    {t}: {i + 1}/{n} acc={correct / (i + 1):.4f}")
         acc = correct / max(1, n)
         results[t] = {"acc": acc, "n": n, "sec": round(time.time() - t0, 1)}
-        log(f"  [{t}] acc={acc:.4f} (n={n}, {time.time()-t0:.1f}s)")
+        log(f"  [{t}] acc={acc:.4f} (n={n}, {time.time() - t0:.1f}s)")
 
     mean = sum(v["acc"] for v in results.values()) / max(1, len(results))
     log(f"\nMEAN acc = {mean:.4f}  model={args.model}")
     if args.out:
-        json.dump({"model": args.model, "results": results, "mean": mean},
-                  open(args.out, "w", encoding="utf-8"), indent=1)
+        os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
+        with open(args.out, "w", encoding="utf-8") as f:
+            json.dump({"model": args.model, "results": results, "mean": mean}, f, indent=1)
 
 
 if __name__ == "__main__":

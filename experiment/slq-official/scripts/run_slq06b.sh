@@ -1,13 +1,10 @@
 #!/bin/bash
-set -e
-cd /opt/zh/slq-official
-source /opt/zh/cann/ascend-toolkit/set_env.sh
-source /root/miniconda3/etc/profile.d/conda.sh
-conda activate agent
-export ASCEND_RT_VISIBLE_DEVICES=5
-export HF_HUB_OFFLINE=1
-export HF_DATASETS_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
+# 0.6B smoke: GPTQ the full {2..8} staircase. Only proves the pipeline runs; the
+# 0.6B model is far from task-lossless and is not an acceptance model.
+#
+# Usage: run_slq06b.sh
+set -euo pipefail
+. "$(dirname "$0")/common.sh"
 
 python -u slq_quantize.py \
     --model_name_or_path Qwen/Qwen3-0.6B \
@@ -24,5 +21,5 @@ python -u slq_quantize.py \
     --cpu_offload_activations \
     --dtype bfloat16 \
     --attn_implementation sdpa \
-    --save_dir /opt/zh/slq-official/data/slq_qwen3_06b
+    --save_dir "$SLQ_ROOT/data/slq_qwen3_06b"
 echo SLQ_QUANT_DONE

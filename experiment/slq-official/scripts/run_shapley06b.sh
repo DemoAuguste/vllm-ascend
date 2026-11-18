@@ -1,11 +1,9 @@
 #!/bin/bash
-set -e
-cd /opt/zh/slq-official
-source /opt/zh/cann/ascend-toolkit/set_env.sh
-source /root/miniconda3/etc/profile.d/conda.sh
-conda activate agent
-export ASCEND_RT_VISIBLE_DEVICES=5
-export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+# 0.6B smoke: multi-bitwidth Shapley sensitivity database.
+#
+# Usage: run_shapley06b.sh
+set -euo pipefail
+. "$(dirname "$0")/common.sh"
 
 python -u slq_build_database.py \
     --model Qwen/Qwen3-0.6B \

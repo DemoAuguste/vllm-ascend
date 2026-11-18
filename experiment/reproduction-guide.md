@@ -74,10 +74,11 @@ export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 cd /opt/zh
 git clone https://github.com/IST-DASLab/SLQ.git slq-official
 cd slq-official
-git rev-parse HEAD          # 记录基线 commit，便于回溯
+git checkout eb9f1f2       # 基线必须与 diff 对应，否则补丁可能对不上
+git rev-parse HEAD
 ```
 
-### 2.2 应用 NPU 适配（两种方式任选）
+### 2.2 应用 NPU 适配（两种等价方式，任选其一）
 
 **方式 A（推荐）：直接使用已同步文件**
 
@@ -91,17 +92,19 @@ src/metrics/evaluation.py
 src/models/loading.py
 src/quant/fast_obq.py
 src/quant/quantizer.py
+eval/zeroshot_eval.py        # 新建 eval/ 目录，评测脚本
 ```
 
-**方式 B：运行增量补丁**（`patches/patch_npu*.py`，按编号顺序）
+**方式 B：打单个 diff**
 
 ```bash
-for p in patch_npu.py patch_npu2.py patch_npu3.py patch_npu4.py \
-         patch_npu5.py patch_npu6.py patch_npu7.py patch_npu8.py \
-         patch_eval_npu.py; do
-  python patches/$p
-done
+git -C /opt/zh/slq-official apply \
+    <本仓库>/experiment/slq-official/patches/npu-adaptation.patch
 ```
+
+> 两种方式的结果已逐字节校验一致（apply 后 7 个文件 hash 相同）。
+> **不要**再用早期的 `patch_npu*.py`：它们漏了 `loading.py` 的 VLM 修复（会静默加载随机权重），
+> 且 `patch_npu.py` 重跑会把 `fast_obq.py` 写成语法错误。
 
 ### 2.3 修改清单（复现时必须生效）
 
@@ -143,10 +146,12 @@ ls -lh data/fineweb_10bt_000.parquet     # 约 2.1G
 `scripts/build_calib.py`：从 parquet 抽文本、tokenize、切成 `(1, seq)` 张量列表。
 
 ```bash
-python -u build_calib.py --parquet data/fineweb_10bt_000.parquet \
-    --tokenizer "$M" --seq 8192 --num 128 --out data/calib_27b_1m_8192.pt
+bash scripts/run_calib27b.sh
 
-python -u build_calib.py --parquet data/fineweb_10bt_000.parquet \
+# 等价的手工命令
+python -u scripts/build_calib.py --parquet data/fineweb_10bt_000.parquet \
+    --tokenizer "$M" --seq 8192 --num 128 --out data/calib_27b_1m_8192.pt
+python -u scripts/build_calib.py --parquet data/fineweb_10bt_000.parquet \
     --tokenizer "$M" --seq 2048 --num 128 --out data/calib_27b_256k_2048.pt
 ```
 
@@ -192,10 +197,13 @@ bash scripts/run_tl06b.sh       # TL（需要 shapley 库时先跑 run_shapley06
 
 ## 5. 阶段 B：27B 主实验
 
+> 本节命令均在 `/opt/zh/slq-official` 下执行；脚本会自己 `cd` 到 `SLQ_ROOT`
+> （默认就是该目录），路径可用 `SLQ_ROOT` / `SLQ_MODEL` / `SLQ_LAYERS` 等环境变量覆盖。
+
 ### B1 GPTQ 全位宽 {2,4,6,8}（约 3.3 h）
 
 ```bash
-bash scripts/run_slq27b_v2.sh
+bash scripts/run_slq27b.sh
 ```
 
 关键参数：
@@ -232,7 +240,7 @@ SLQ27_DONE
 ### B2 error_db + baseline（约 3 min）
 
 ```bash
-bash scripts/run_db27b_base.sh
+bash scripts/run_db27b.sh base
 ```
 
 期望日志：`496 layers in 400 groups`，产出：
@@ -243,9 +251,9 @@ bash scripts/run_db27b_base.sh
 ### B3 Shapley 敏感度（约 6.8 h，2 卡并行）
 
 ```bash
-# 两个独立进程，不同 seed，各 P=4
-nohup bash scripts/run_shapley27b.sh 5 42 > shapley27b_s42.log 2>&1 &
-nohup bash scripts/run_shapley27b.sh 7 43 > shapley27b_s43.log 2>&1 &
+# 两个独立进程，不同 seed，各 P=4（卡号用环境变量指定）
+ASCEND_RT_VISIBLE_DEVICES=5 nohup bash scripts/run_db27b.sh shapley 42 > shapley27b_s42.log 2>&1 &
+ASCEND_RT_VISIBLE_DEVICES=7 nohup bash scripts/run_db27b.sh shapley 43 > shapley27b_s43.log 2>&1 &
 ```
 
 成本模型：`(4-1 个档位) × 4 排列 × 400 组 × 单次 metric(≈5.1 s)` ≈ 6.8 h/进程。实测 **2044 s/排列**。
@@ -254,7 +262,7 @@ nohup bash scripts/run_shapley27b.sh 7 43 > shapley27b_s43.log 2>&1 &
 
 ```bash
 cd "$LD"
-python /opt/zh/slq-official/merge_shapley.py \
+python /opt/zh/slq-official/scripts/merge_shapley.py \
   shapley_topk10_calib_27b_256k_2048_4x2048_4perms_bw2-4-6-8_grpb7761ae4_seed42.json \
   shapley_topk10_calib_27b_256k_2048_4x2048_4perms_bw2-4-6-8_grpb7761ae4_seed43.json \
   shapley_topk10_calib_27b_256k_2048_4x2048_8perms_bw2-4-6-8_grpb7761ae4_seed42.json
@@ -274,7 +282,7 @@ python /opt/zh/slq-official/merge_shapley.py \
 ### B4 生成混合精度配置（约 30 s）
 
 ```bash
-python make_configs.py
+python scripts/make_configs.py
 ```
 
 期望输出：
@@ -293,11 +301,11 @@ python make_configs.py
 ```bash
 # b3.6 / b3.8 混合配置
 python -u slq_build_checkpoint.py --model "$M" --layer-dir "$LD" \
-  --config config_tl27b_b3.6.txt --output-dir /opt/zh/slq-official/ckpt_27b \
+  --config configs/config_tl27b_b3.6.txt --output-dir /opt/zh/slq-official/ckpt_27b \
   --subdir-name b36 --dtype bfloat16 --quant-format fake --group-size 128 --force
 
 python -u slq_build_checkpoint.py --model "$M" --layer-dir "$LD" \
-  --config config_tl27b_b3.8.txt --output-dir /opt/zh/slq-official/ckpt_27b \
+  --config configs/config_tl27b_b3.8.txt --output-dir /opt/zh/slq-official/ckpt_27b \
   --subdir-name b38 --dtype bfloat16 --quant-format fake --group-size 128 --force
 
 # 对照锚点（uniform）
@@ -329,15 +337,19 @@ du -sh "$C/b36"        # 期望约 55G（fake-quant，与 BF16 同尺寸）
 
 ### B6 zero-shot 评测（500 样本，约 70 min/模型）
 
-评测脚本 `zeroshot_eval.py`（log-likelihood，NPU 原生；`lm_eval` 在本环境会超时）。
+评测脚本 `eval/zeroshot_eval.py`（log-likelihood，NPU 原生；`lm_eval` 在本环境会超时）。
 
 ```bash
-cd /opt/zh/SLQ-gptq
-T=arc_easy,arc_challenge,piqa,hellaswag,winogrande,openbookqa
+cd /opt/zh/slq-official
 
-python -u zeroshot_eval.py --model "$M"        --device npu:0 --limit 500 --tasks $T --out zs27b_bf16_500.json
-python -u zeroshot_eval.py --model "$C/b36"    --device npu:0 --limit 500 --tasks $T --out zs27b_b36_500.json
-python -u zeroshot_eval.py --model "$C/b38"    --device npu:0 --limit 500 --tasks $T --out zs27b_b38_500.json
+# 推荐：一条命令评 BF16 + b36 + b38，结果写入 results/
+bash scripts/run_zs.sh 500 bf16 b36 b38
+
+# 等价的手工命令
+T=arc_easy,arc_challenge,piqa,hellaswag,winogrande,openbookqa
+python -u eval/zeroshot_eval.py --model "$M"     --device npu:0 --limit 500 --tasks $T --out results/zs27b_bf16_500.json
+python -u eval/zeroshot_eval.py --model "$C/b36" --device npu:0 --limit 500 --tasks $T --out results/zs27b_b36_500.json
+python -u eval/zeroshot_eval.py --model "$C/b38" --device npu:0 --limit 500 --tasks $T --out results/zs27b_b38_500.json
 ```
 
 > 单卡运行；若 `--limit 200`，耗时约 17 min/模型（用于快速对比）。
@@ -359,14 +371,18 @@ python -u zeroshot_eval.py --model "$C/b38"    --device npu:0 --limit 500 --task
 ### B7 双卡 TP=2 部署（约 6 min）
 
 ```bash
-bash /opt/zh/SLQ-gptq/run_deploy27b.sh \
-  "$C/b36" 2 5,7 1 8100
+cd /opt/zh/slq-official
+bash scripts/run_deploy27b.sh "$C/b36" 2 5,7 1
 ```
+
+参数顺序：`<checkpoint 路径> [TP] [卡号] [EAGER] [日志路径]`；日志默认写到当前目录的
+`deploy27b_tp2.log`。
 
 脚本要点（缺一不可）：
 
 - `-e VLLM_WORKER_MULTIPROC_METHOD=spawn -e OMP_NUM_THREADS=1`（否则 fork 线程池断言崩溃）
-- smoke 脚本必须有 `if __name__ == "__main__": main()` 守卫（否则 spawn 递归）
+- smoke 脚本必须有 `if __name__ == "__main__": main()` 守卫（否则 spawn 递归）；
+  脚本把它只读挂载到容器内 `/smoke/smoke_llm.py`，checkpoint 目录挂到 `/work`
 - 镜像 `nightly-main`，`--net=host --ipc=host --shm-size=64g`，映射 davinci5/7
 
 **期望日志**：
@@ -454,13 +470,12 @@ Available KV cache memory: 23.99 GiB
 ├── ckpt_27b/<snap>/
 │   ├── b36/  b38/  b34/              # 混合精度 fake checkpoint
 │   └── uniform2/ uniform4/ uniform6/ # 对照锚点
-├── config_tl27b_b{3.4,3.6,3.8,4.0}.txt
+├── configs/config_tl27b_b{3.4,3.6,3.8,4.0}.txt
 └── scripts/                          # 本仓库 experiment/slq-official/scripts
 
-/opt/zh/SLQ-gptq/
-├── zeroshot_eval.py
+/opt/zh/slq-official/results/
 ├── zs27b_bf16_500.json / zs27b_b36_500.json / zs27b_b38_500.json
-└── run_deploy27b.sh
+└── （评测 JSON 由 scripts/run_zs.sh 或 scripts/run_build_eval.sh 写出）
 ```
 
 ---
