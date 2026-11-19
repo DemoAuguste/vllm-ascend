@@ -402,6 +402,20 @@ Available KV cache memory: 23.99 GiB
 
 ---
 
+### B8 HTTP 接口验证（可选，约 5 min）
+
+B7 的 smoke 只验证容器能起来；需要对外提供 OpenAI 兼容接口时，用 `deploy/` 下的脚本：
+
+```bash
+cd /opt/zh/slq-official
+bash deploy/serve_b36.sh                 # TP=2、卡 0,2、端口 8098，等 /health 变绿
+bash deploy/http_validate.sh 8098 qwen3.8-27b-slq-b36
+```
+
+实测：每卡权重 25.61 GB、KV 24.11 GiB / 320,605 tokens、引擎初始化 179 s；预热后 128 tokens ≈ 4.3 s
+（约 28–30 tok/s 解码）。冷启动后头几个新形状请求会触发图编译（194–300 s），先 warmup 再压测。
+完整记录见 [slq-official/DEPLOYMENT-VALIDATION.md](slq-official/DEPLOYMENT-VALIDATION.md)。
+
 ## 6. 结果校验清单
 
 | # | 检查项 | 通过标准 |

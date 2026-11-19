@@ -18,6 +18,7 @@
 | 看最终结论、全部数字与工程坑清单 | [summary-report.md](summary-report.md) |
 | 看位宽分布 / 存储 / 显存收益的推算 | [quantization-analysis.md](quantization-analysis.md) |
 | 看现行代码 | [slq-official/](slq-official/) |
+| 看部署与 HTTP 接口验证记录 | [slq-official/DEPLOYMENT-VALIDATION.md](slq-official/DEPLOYMENT-VALIDATION.md) |
 | 看任务定义与验收口径 | [task.md](task.md) |
 | 看当前进度 | [progress.md](progress.md) |
 | 找历史方案（PCDVQ / SAGE / RoleQ / 自研 SLQ-GPTQ） | [archive/](archive/) |
@@ -40,7 +41,9 @@ experiment/
 │   ├── src/                   #   官方仓的 NPU 适配覆盖文件（4 个）
 │   ├── eval/zeroshot_eval.py  #   评测：6 任务 log-likelihood
 │   ├── configs/               #   4 个预算的位宽配置（b3.4/3.6/3.8/4.0）
-│   ├── scripts/               #   流水线入口（common.sh + run_*.sh）
+│   ├── scripts/               #   流水线入口（common.sh + run_*.sh + 拼装/校验）
+│   ├── deploy/                #   自愈总控 + vLLM 上线 + HTTP 验证
+│   ├── DEPLOYMENT-VALIDATION.md  # 一次完整的重建→上线→接口验证记录
 │   └── patches/               #   单个 NPU 适配 diff（对官方 eb9f1f2）
 └── archive/                   # 只读归档：历史方案、过期文档、逐日日志
 ```

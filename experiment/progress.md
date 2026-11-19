@@ -29,6 +29,23 @@
 验证：归档后的 4 套算子单测仍全部通过（9 + 27 + 13 + 8 = 57）；27B 四档配置的层数/位宽/KL
 单调性校验通过；补丁在官方 `eb9f1f2` 上 apply 后与 7 个覆盖文件 hash 一致；文档相对链接全通。
 
+## 2026-11-18/19 重新量化 + HTTP 部署验证
+
+服务器上原有的层库与 checkpoint 已被清理，本次按 SLQ 方法**从零重跑**并完成上线验证
+（完整记录见 [slq-official/DEPLOYMENT-VALIDATION.md](slq-official/DEPLOYMENT-VALIDATION.md)）。
+
+| 项 | 结果 |
+|----|------|
+| 量化 | 496/496 层，层库 275 GB；中途一次 NPU `vector core timeout`，自愈管道换卡续跑 |
+| checkpoint | b3.6，51 GB（fake-quant，2 分片）+ VLM 预处理文件 |
+| 指纹校验 | 每 128 组取值数 4/16/54/101，上限 4/16/64/256 → PASS |
+| 服务 | vLLM-Ascend `v0.30.0`，TP=2（卡 0、2），端口 8098，`/health` 200 |
+| HTTP | `/v1/models`、chat、completions、流式 SSE 全部可用；预热后 128 tokens ≈ 4.3 s |
+| 新增脚本 | `deploy/{pipeline_27b,finalize_steps,serve_27b,serve_b36,http_validate}.sh`、`scripts/{build_ckpt,verify_fakequant}.sh` |
+
+偏差：本次校准用 65536 tokens（文档口径 262144）以缩短重跑时间；权重仍是 fake-quant，
+显存/存储收益需 INT 打包后才会体现。
+
 ## 下一步（可选）
 
 1. fake-quant → 真 INT 打包（官方 `humming_online` 或自研加载），把 3.17× 存储收益与

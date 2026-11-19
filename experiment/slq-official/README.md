@@ -17,7 +17,9 @@
 | `src/metrics/evaluation.py` | 大词表 logits 的每 batch `empty_cache` |
 | `eval/zeroshot_eval.py` | 评测：6 任务 log-likelihood（替代超时的 lm_eval） |
 | `configs/` | 27B 的 4 个预算配置（b3.4 / b3.6 / b3.8 / b4.0） |
-| `scripts/` | 流水线入口脚本，见 §4 |
+| `scripts/` | 流水线入口脚本（校准 → GPTQ → 敏感度 → 配置 → 拼装 → 校验），见 §4 |
+| `deploy/` | 部署与 HTTP 验证：`pipeline_27b.sh`（自愈总控）、`serve_*.sh`、`http_validate.sh`，见 §5 |
+| `DEPLOYMENT-VALIDATION.md` | 一次完整的「重建 → 拼装 → 上线 → HTTP 验证」记录 |
 | `patches/npu-adaptation.patch` | 上面 7 个 python 文件的**全部** NPU 改动，单个 diff |
 
 ## 2. 把 NPU 适配装进官方仓
@@ -71,6 +73,8 @@ git -C /opt/zh/slq-official apply <本目录>/patches/npu-adaptation.patch
 | `merge_shapley.py` | ② | 合并两个 seed 的库 → 等效 8 排列 |
 | `make_configs.py` | ③ | ILP 预算扫描 → `configs/config_tl27b_b*.txt` |
 | `run_ckpt27b.sh <bits>` | ④ | uniform 锚点 checkpoint（对照基线） |
+| `build_ckpt.sh` | ④ | 按配置拼装 fake-quant checkpoint，并补齐 VLM 预处理文件 |
+| `verify_fakequant.sh` | ④ 校验 | 指纹校验：每 128 组取值数 ≤ 2^bits，且与 BF16 有量化差异 |
 | `run_build_eval.sh [limit] <budget>...` | ④+评测 | 按配置拼 checkpoint 并评测（默认 200 样本） |
 | `run_zs.sh [limit] <spec>...` | 评测 | 对已有模型评测（`bf16` / `b36` / `uniform4` / 绝对路径） |
 | `run_deploy27b.sh <ckpt> [TP] [devices]` | 部署 | vllm-ascend TP=2 容器 smoke |
@@ -80,14 +84,44 @@ git -C /opt/zh/slq-official apply <本目录>/patches/npu-adaptation.patch
 评测结果统一写入 `$SLQ_RESULTS`（默认 `$SLQ_ROOT/results`），文件名形如
 `zs27b_b36_500.json`。
 
-## 5. bpp 口径与配置
+## 5. 部署与 HTTP 验证
+
+`deploy/` 下的脚本把「拼装 → 校验 → 上线 → 接口验证」串起来，路径同样可用 `SLQ_ROOT` 等覆盖。
+
+| 脚本 | 说明 |
+|------|------|
+| `pipeline_27b.sh` | 无人值守总控：SLQ 量化（断点续跑 + 失败换卡重试）→ 拼装 → 校验 → 上线 → HTTP 验证 |
+| `finalize_steps.sh` | 后四步：拼装 → 校验 → 上线 → HTTP 验证（层库已就绪时单独用） |
+| `serve_27b.sh` | 通用 vLLM-Ascend OpenAI 服务启动器（TP、卡、端口、HCCL 网卡可配） |
+| `serve_b36.sh` | b3.6 checkpoint 专用：起服务并等到 `/health` 变绿 |
+| `http_validate.sh` | 五连验证：`/health`、`/v1/models`、chat、completions、流式 SSE |
+
+```bash
+# 一键（后台，自愈）
+nohup bash deploy/pipeline_27b.sh > /dev/null 2>&1 &
+
+# 或分步
+bash scripts/build_ckpt.sh && bash scripts/verify_fakequant.sh
+bash deploy/serve_b36.sh                      # 默认 TP=2、卡 0,2、端口 8098
+bash deploy/http_validate.sh 8098 qwen3.8-27b-slq-b36
+```
+
+该主机上部署有两个硬性条件（详见 [DEPLOYMENT-VALIDATION.md](DEPLOYMENT-VALIDATION.md)）：
+
+- 必须用 `quay.io/ascend/vllm-ascend:v0.30.0` 镜像（nightly main 的 vLLM 0.33 加载不了该架构）；
+- 卡必须**非连续**映射（如 `--device /dev/davinci0 --device /dev/davinci2`），TP=2 还要显式
+  设置 `HCCL_SOCKET_IFNAME` / `GLOO_SOCKET_IFNAME`。
+
+冷启动后头几个不同形状的请求会触发图编译（实测 194–300 s），上线后先 warmup 再压测。
+
+## 6. bpp 口径与配置
 
 - 位宽计费含 g128 的 scale/zero 开销：`2→2.156, 4→4.156, 6→6.156, 8→8.156`；
 - 平均位宽必须用 `compute_avg_bitwidth`（参数加权）计算，不要用“目标 nominal + 0.156”；
 - 四档预算与预测 KL：3.400/0.0753、**3.600/0.0473**、3.800/0.0269、4.000/0.0155；
 - b3.6 实测 100.0% 恢复（500 样本），b3.8 为 101.6%。
 
-## 6. 已知限制
+## 7. 已知限制
 
 - checkpoint 是 **fake-quant**（BF16 落在整数格点），体积与 BF16 相同；17.26 GB / 每卡 8.1 GiB
   是 INT 打包后的理论值，尚未接 humming/自研 INT 加载。
