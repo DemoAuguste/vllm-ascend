@@ -20,6 +20,7 @@
 | `scripts/` | 流水线入口脚本（校准 → GPTQ → 敏感度 → 配置 → 拼装 → 校验），见 §4 |
 | `deploy/` | 部署与 HTTP 验证：`pipeline_27b.sh`（自愈总控）、`serve_*.sh`、`http_validate.sh`，见 §5 |
 | `DEPLOYMENT-VALIDATION.md` | 一次完整的「重建 → 拼装 → 上线 → HTTP 验证」记录 |
+| `DEPLOYMENT-GUIDE.md` | 在**其他 NPU 环境**从零部署本量化模型的操作手册（下载/校验/启动/接口/排查） |
 | `patches/npu-adaptation.patch` | 上面 7 个 python 文件的**全部** NPU 改动，单个 diff |
 
 ## 2. 把 NPU 适配装进官方仓
